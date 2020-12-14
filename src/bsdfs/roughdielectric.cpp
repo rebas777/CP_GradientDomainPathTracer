@@ -544,7 +544,8 @@ public:
 		const Normal m = sampleDistr.sample(math::signum(Frame::cosTheta(bRec.wi)) * bRec.wi, sample, microfacetPDF);
 		if (microfacetPDF == 0)
 			return Spectrum(0.0f);
-		pdf = microfacetPDF;
+		
+		float temporaryPdf = microfacetPDF;
 
 		Float cosThetaT;
 		Float F = fresnelDielectricExt(dot(bRec.wi, m), cosThetaT, m_eta);
@@ -553,9 +554,9 @@ public:
 		if (hasReflection && hasTransmission) {
 			if (bRec.sampler->next1D() > F) {
 				sampleReflection = false;
-				pdf *= 1-F;
+				temporaryPdf *= 1-F;
 			} else {
-				pdf *= F;
+				temporaryPdf *= F;
 			}
 		} else {
 			weight *= hasReflection ? F : (1-F);
@@ -609,8 +610,9 @@ public:
 			weight *= std::abs(distr.eval(m) * distr.G(bRec.wi, bRec.wo, m)
 				* dot(bRec.wi, m) / (microfacetPDF * Frame::cosTheta(bRec.wi)));
 
-		pdf *= std::abs(dwh_dwo);
+		temporaryPdf *= std::abs(dwh_dwo);
 
+		pdf = temporaryPdf;
 		return weight;
 	}
 

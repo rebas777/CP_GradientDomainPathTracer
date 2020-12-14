@@ -382,9 +382,10 @@ public:
 		);
 
 		/* Sample M, the microfacet normal */
-		Normal m = distr.sample(bRec.wi, sample, pdf);
+		Float temporaryPdf(0);
+		Normal m = distr.sample(bRec.wi, sample, temporaryPdf);
 
-		if (pdf == 0)
+		if (temporaryPdf == 0)
 			return Spectrum(0.0f);
 
 		/* Perfect specular reflection based on the microfacet normal */
@@ -405,13 +406,15 @@ public:
 			weight = distr.smithG1(bRec.wo, m);
 		} else {
 			weight = distr.eval(m) * distr.G(bRec.wi, bRec.wo, m)
-				* dot(bRec.wi, m) / (pdf * Frame::cosTheta(bRec.wi));
+				* dot(bRec.wi, m) / (temporaryPdf * Frame::cosTheta(bRec.wi));
 		}
 
-		/* Jacobian of the half-direction mapping */
-		pdf /= 4.0f * dot(bRec.wo, m);
-
-		return F * weight;
+		if(weight > 0) {
+			/* Jacobian of the half-direction mapping */
+			pdf = temporaryPdf / (4.0f * dot(bRec.wo, m));
+			return F * weight;
+		}
+		return Spectrum(Float(0));
 	}
 
 	void addChild(const std::string &name, ConfigurableObject *child) {

@@ -337,9 +337,10 @@ public:
 
 			Vector wiBackup = bRec.wi;
 			bRec.wi = wiPrime;
-			Spectrum result = m_nested->sample(bRec, pdf, sample);
+			Float temporaryPdf(0);
+			Spectrum result = m_nested->sample(bRec, temporaryPdf, sample);
 			bRec.wi = wiBackup;
-			if (result.isZero())
+			if (temporaryPdf == (Float)0)
 				return Spectrum(0.0f);
 
 			Vector woPrime = bRec.wo;
@@ -356,7 +357,7 @@ public:
 				return Spectrum(0.0f);
 
 			if (sampleSpecular) {
-				pdf *= 1.0f - probSpecular;
+				temporaryPdf *= 1.0f - probSpecular;
 				result /= 1.0f - probSpecular;
 			}
 
@@ -364,8 +365,9 @@ public:
 
 			/* Solid angle compression & irradiance conversion factors */
 			if (BSDF::getMeasure(bRec.sampledType) == ESolidAngle)
-				pdf *= m_invEta * m_invEta * Frame::cosTheta(bRec.wo) / Frame::cosTheta(woPrime);
+				temporaryPdf *= m_invEta * m_invEta * Frame::cosTheta(bRec.wo) / Frame::cosTheta(woPrime);
 
+			pdf = temporaryPdf;
 			return result;
 		}
 	}

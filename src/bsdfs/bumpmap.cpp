@@ -222,15 +222,18 @@ public:
 		perturbedQuery.wi = perturbed.toLocal(its.toWorld(bRec.wi));
 		perturbedQuery.typeMask = bRec.typeMask;
 		perturbedQuery.component = bRec.component;
-		Spectrum result = m_nested->sample(perturbedQuery, pdf, sample);
 
-		if (!result.isZero()) {
+		Float temporaryPdf = (Float)0;
+		Spectrum result = m_nested->sample(perturbedQuery, temporaryPdf, sample);
+
+		if (temporaryPdf > 0) {
 			bRec.sampledComponent = perturbedQuery.sampledComponent;
 			bRec.sampledType = perturbedQuery.sampledType;
 			bRec.wo = its.toLocal(perturbed.toWorld(perturbedQuery.wo));
 			bRec.eta = perturbedQuery.eta;
 			if (Frame::cosTheta(bRec.wo) * Frame::cosTheta(perturbedQuery.wo) <= 0)
 				return Spectrum(0.0f);
+			pdf = temporaryPdf;
 		}
 
 		return result;

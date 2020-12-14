@@ -21,9 +21,9 @@
 MTS_NAMESPACE_BEGIN
 
 ImageBlock::ImageBlock(Bitmap::EPixelFormat fmt, const Vector2i &size,
-		const ReconstructionFilter *filter, int channels, bool warn) : m_offset(0),
-		m_size(size), m_filter(filter), m_weightsX(NULL), m_weightsY(NULL), m_warn(warn) {
-	m_borderSize = filter ? filter->getBorderSize() : 0;
+const ReconstructionFilter *filter, int channels, bool warn, int extraBorder) : m_offset(0),
+m_size(size), m_filter(filter), m_weightsX(NULL), m_weightsY(NULL), m_warn(warn), m_allowNegative(false) {
+	m_borderSize = extraBorder + (filter ? filter->getBorderSize() : 0);
 
 	/* Allocate a small bitmap data structure for the block */
 	m_bitmap = new Bitmap(fmt, Bitmap::EFloat,

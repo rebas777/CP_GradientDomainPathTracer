@@ -429,13 +429,16 @@ public:
 			if (Frame::cosTheta(bRec.wo) * Frame::cosTheta(bRec.wi) <= 0)
 				return Spectrum(0.0f);
 		} else {
+			Float pdf = (Float)0;
+
 			Vector wiBackup = bRec.wi;
 			bRec.wi = refractTo(EInterior, bRec.wi);
-			Spectrum result = m_nested->sample(bRec, _pdf, sample);
+			Spectrum result = m_nested->sample(bRec, pdf, sample);
 			bRec.wi = wiBackup;
-			if (result.isZero())
+			if (pdf <= (Float)0)
 				return Spectrum(0.0f);
 			bRec.wo = refractTo(EExterior, bRec.wo);
+
 			if (bRec.wo.isZero())
 				return Spectrum(0.0f);
 		}

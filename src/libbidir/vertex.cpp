@@ -161,6 +161,7 @@ bool PathVertex::sampleNext(const Scene *scene, Sampler *sampler,
 
 				measure = BSDF::getMeasure(bRec.sampledType);
 				componentType = (uint16_t) (bRec.sampledType & BSDF::EAll);
+				sampledComponentIndex = bRec.sampledComponent;
 
 				wo = its.toWorld(bRec.wo);
 
@@ -1218,7 +1219,9 @@ Point PathVertex::getPosition() const {
 		case EEmitterSample:
 		case ESensorSample:
 			return getPositionSamplingRecord().p;
-		default:
+		default:	
+		//	return getIntersection().p; //this is copied from my mitsuba 0.4.2 code. but does it make sense? I need to verify this!!!
+
 			SLog(EError, "PathVertex::getPosition(): Encountered an "
 				"unsupported vertex type (%i)!", type);
 			return Point(0.0f);

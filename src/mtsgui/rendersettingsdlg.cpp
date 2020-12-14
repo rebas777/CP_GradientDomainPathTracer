@@ -483,6 +483,12 @@ void RenderSettingsDialog::apply(SceneContext *ctx) {
 	filmProps.setInteger("width", size.x, false);
 	filmProps.setInteger("height", size.y, false);
 
+	/* g-pt and g-bdpt only work with multifilm. */
+	if (getPluginName(ui->integratorBox) == "gbdpt" || getPluginName(ui->integratorBox) == "gpt")
+		filmProps.setPluginName("multifilm");
+	else
+		filmProps.setPluginName("hdrfilm");
+
 	if (size.x != cropSize.x || size.y != cropSize.y || cropOffset.x != 0 || cropOffset.y != 0) {
 		filmProps.setInteger("cropWidth", cropSize.x, false);
 		filmProps.setInteger("cropHeight", cropSize.y, false);
@@ -658,6 +664,7 @@ QStringList RenderSettingsDialog::validateConfiguration() const {
 	QStringList messages;
 	std::string integratorName = getPluginName(ui->integratorBox);
 	std::string samplerName = getPluginName(ui->samplerBox);
+	std::string filterName = getPluginName(ui->rFilterBox);
 	Properties integratorProps, samplerProps;
 	m_integratorNode->putProperties(integratorProps);
 	m_samplerNode->putProperties(samplerProps);
@@ -702,6 +709,11 @@ QStringList RenderSettingsDialog::validateConfiguration() const {
 				messages << "Warning: are you sure you need more than 4 samples/pixel for progressive photon mapping? This will be slow..";
 		}
 	}
+	/* g-bdpt does not support any non-boxfilters at the moment*/
+	if (integratorName == "gbdpt")
+		if ( filterName != "box") 
+				messages << "Error: G-BDPT is only compatible with the Box reconstruction filter.";
+
 	return messages;
 }
 

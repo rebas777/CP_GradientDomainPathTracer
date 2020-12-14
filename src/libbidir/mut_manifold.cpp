@@ -25,23 +25,56 @@ MTS_NAMESPACE_BEGIN
 
 #define DIFF_SAMPLES 50000
 
+/* lots of statistics to verify the code. Should remove this at some point...*/
 static StatsCounter statsAcceptedRad("Manifold perturbation",
-		"Acceptance rate (rad. transport)", EPercentage);
+"Acceptance rate (rad. transport)", EPercentage);
 static StatsCounter statsGeneratedRad("Manifold perturbation",
-		"Successful generation rate (rad. transport)", EPercentage);
+	"Successful generation rate (rad. transport)", EPercentage);
 
 static StatsCounter statsAcceptedImp("Manifold perturbation",
-		"Acceptance rate (imp. transport)", EPercentage);
+	"Acceptance rate (imp. transport)", EPercentage);
 static StatsCounter statsGeneratedImp("Manifold perturbation",
-		"Successful generation rate (imp. transport)", EPercentage);
+	"Successful generation rate (imp. transport)", EPercentage);
 static StatsCounter statsUsedManifold("Manifold perturbation",
-		"Perturbations involving manifold walks", EPercentage);
+	"Perturbations involving manifold walks", EPercentage);
 static StatsCounter statsNonReversible("Manifold perturbation",
-		"Non-reversible walks", EPercentage);
+	"Non-reversible walks", EPercentage);
 static StatsCounter statsRoughMediumSpecular("Manifold perturbation",
-		"Medium treated as specular", EPercentage);
+	"Medium treated as specular", EPercentage);
 static StatsCounter statsRoughSurfaceSpecular("Manifold perturbation",
-		"Rough material treated as specular", EPercentage);
+	"Rough material treated as specular", EPercentage);
+static StatsCounter statsUsedPropagation("Manifold perturbation",
+	"Perturbations involving propagation", EPercentage);
+
+//MW specific stats
+static StatsCounter statsMWFailReversible("Perturbation using manifold walk",
+	"failed reversibility", EPercentage);
+static StatsCounter statsMWFailInit("Perturbation using manifold walk",
+	"failed init", EPercentage);
+static StatsCounter statsMWFailMove("Perturbation using manifold walk",
+	"failed move", EPercentage);
+static StatsCounter statsMWFailUpdate("Perturbation using manifold walk",
+	"failed update", EPercentage);
+static StatsCounter statsMWFailRobustness("Perturbation using manifold walk",
+	"failed robustness", EPercentage);
+static StatsCounter statsMWZeroLength("Perturbation using manifold walk",
+	"failed zero length check", EPercentage);
+static StatsCounter statsMWSuccess("Perturbation using manifold walk",
+	"success-rate", EPercentage);
+
+//Propagation tests
+static StatsCounter statsPROPFailedBRDF("Perturbation: Propagation details",
+	"failed brdf check", EPercentage);
+static StatsCounter statsPROPwoWorldZero("Perturbation: Propagation details",
+	"wo_world is zero", EPercentage);
+static StatsCounter statsPROPFailedPerturbDirection("Perturbation: Propagation details",
+	"perturb direction failed (surface)", EPercentage);
+static StatsCounter statsPROPFailedPropagatePerturbation("Perturbation: Propagation details",
+	"propagatePerturbation failed (surface)", EPercentage);
+static StatsCounter statsPROPFailedDifferentialsZeroMedium("Perturbation: Propagation details",
+	"failed differentials (medium)", EPercentage);
+static StatsCounter statsPROPFailedPerturbDirectionMedium("Perturbation: Propagation details",
+	"failed perturb direction (medium)", EPercentage);
 
 Float ManifoldPerturbation::m_thetaDiffSurface;
 Float ManifoldPerturbation::m_thetaDiffMedium;
@@ -52,11 +85,13 @@ Mutex *ManifoldPerturbation::m_thetaDiffMutex = new Mutex();
 ManifoldPerturbation::ManifoldPerturbation(const Scene *scene, Sampler *sampler,
 		  MemoryPool &pool, Float probFactor, bool enableOffsetManifolds,
 		  bool enableSpecularMedia, Float avgAngleChangeSurface,
-		  Float avgAngleChangeMedium) : m_scene(scene),
+		  Float avgAngleChangeMedium, Float specularThreshold) : 
+		  m_scene(scene),
 	  m_sampler(sampler), m_pool(pool),
 	  m_probFactor(probFactor),
 	  m_enableOffsetManifolds(enableOffsetManifolds),
-	  m_enableSpecularMedia(enableSpecularMedia) {
+	  m_enableSpecularMedia(enableSpecularMedia),
+	  m_specularThreshold(specularThreshold) {
 	m_manifold = new SpecularManifold(scene);
 
 	if (avgAngleChangeSurface != 0) {
@@ -764,6 +799,500 @@ void ManifoldPerturbation::accept(const MutationRecord &muRec) {
 	else
 		++statsAcceptedRad;
 
+}
+
+
+
+bool ManifoldPerturbation::generateOffsetPathGBDPT(Path &source, Path &proposal, MutationRecord &muRec, Vector2 offset, bool &couldConnectBehindB, bool lightPath) {
+
+	int k = source.length();
+
+	if (!source.vertex(k - 1)->isConnectable())
+		return false; // weird camera?
+
+	int sensor_idx = k - 1;
+	int step = -1;  // always towards light source
+	int a = k - 1;  // sensor vertex
+	int b, c;
+
+	if ((b = getSpecularChainEndGBDPT(source, a + step, step)) == -1)
+		return false;
+	if ((c = getSpecularChainEndGBDPT(source, b + step, step)) == -1)
+		return false;
+
+
+
+	ETransportMode mode = ERadiance; //always ERadiance
+	//here always l=c ,m=a, q=b-1
+	int l = std::min(a, c);
+	int m = std::max(a, c);
+	int q = std::min(b, b + step);
+
+	if (mode == EImportance) {
+		statsAcceptedImp.incrementBase();
+		statsGeneratedImp.incrementBase();
+	}
+	else {
+		statsGeneratedRad.incrementBase();
+	}
+
+	//prefix_suffix is the product of all weights outside the patch that is modified (eg [0..l+1]+[m..k])
+	muRec = MutationRecord(EManifoldPerturbation, l, m, m - l, source.getPrefixSuffixWeight(l, m));
+	muRec.extra[0] = a;
+	muRec.extra[1] = b;
+	muRec.extra[2] = c;
+	muRec.extra[3] = step;
+	muRec.extra[4] = mode;
+
+	/* Allocate memory for the proposed path */
+	proposal.clear();
+	proposal.append(source, 0, l + 1);		//path [0...l+1] stays the same
+	proposal.append(m_pool.allocEdge());	//for [l+1...m] we allocate memory (num of elements here doesn't change)
+	memset(proposal.edge(proposal.edgeCount() - 1), 0, sizeof(PathEdge)); // make sure edges are ALWAYS initialized!
+	//}
+	int v_start = /*onlyPerturb ? l :*/ l + 1;
+	for (int i = v_start; i < m; ++i) {
+		proposal.append(m_pool.allocVertex());
+		proposal.append(m_pool.allocEdge());
+		memset(proposal.vertex(proposal.vertexCount() - 1), 0, sizeof(PathVertex));
+		memset(proposal.edge(proposal.edgeCount() - 1), 0, sizeof(PathEdge));  // make sure edges are ALWAYS initialized!
+	}
+	proposal.append(source, m, k + 1); //[m...k] stays the same
+
+	//make deep copy of a and c and 
+	proposal.vertex(a) = proposal.vertex(a)->clone(m_pool);
+	proposal.vertex(c) = proposal.vertex(c)->clone(m_pool); 
+
+
+	/* Sample the first vertex */
+	if (!perturbDirection(source, proposal, step, a, offset, mode, false/*lightPath*/)){
+		goto fail; //fails when it misses the scene
+	}
+
+	/* Generate subsequent vertices between a .. b deterministically */
+	if (!propagatePerturbation(source, proposal, step, a, b, mode))
+		goto fail;
+
+	if (!proposal.vertex(b)->isConnectable())
+		goto fail; 
+	statsUsedManifold.incrementBase();
+
+	int walkSuccess = true;
+	/*manifold walk between b .. c*/
+	if (std::abs(b - c) > 1) {
+		walkSuccess = manifoldWalk(source, proposal, step, b, c);
+		if (!walkSuccess && lightPath)
+			goto fail;
+		//in case that the MW fails change state of proposal to as if no MW should have been done in the first place!
+		if (!walkSuccess){
+			for (int i = b + step; i != c; i += step){
+				m_pool.release(proposal.vertex(i));
+				proposal.vertex(i) = source.vertex(i)->clone(m_pool);
+			}
+			muRec.extra[2] = b + step;
+		}
+	}
+
+	//This connects the b vertex to the next one.
+	// only needed for connections *after* the vertex B, so accept even if this fails
+	couldConnectBehindB = PathVertex::connect/*NoEarlyExit*/(m_scene,
+		proposal.vertexOrNull(q - 1),
+		proposal.edgeOrNull(q - 1),
+		proposal.vertex(q),
+		proposal.edge(q),
+		proposal.vertex(q + 1),
+		proposal.edgeOrNull(q + 1),
+		proposal.vertexOrNull(q + 2),
+		source.vertex(q)->isConnectable() ? EArea : EDiscrete,
+		source.vertex(q + 1)->isConnectable() ? EArea : EDiscrete);
+
+	if (lightPath && !couldConnectBehindB)
+		goto fail;
+
+	if (m >= k - 1)
+		proposal.vertex(k - 1)->updateSamplePosition(proposal.vertex(k - 2));
+	//BDAssert(source.matchesConfiguration(proposal)); 
+
+	//copy missing component types, rrWeights, and sampledComponentsIndex from source path
+	//this also makes sure that the shift is invertible (especially the later one, since we cannot force Mitsuba to always use the same component)
+	for (int i = 0; i <= proposal.length(); i++){
+		proposal.vertex(i)->rrWeight = source.vertex(i)->rrWeight;
+		proposal.vertex(i)->sampledComponentIndex = source.vertex(i)->sampledComponentIndex;
+		if (proposal.vertex(i)->getType() == PathVertex::ESurfaceInteraction && proposal.vertex(i)->componentType == 0) //BUG? this looks weird! (look at the second condition...)
+			proposal.vertex(i)->componentType = source.vertex(i)->componentType;
+	}
+
+	if (mode == EImportance)
+		++statsGeneratedImp;
+	else
+		++statsGeneratedRad;
+
+	return true;
+
+	/* in case of failure release every vertex that belongs to the proposal path only */
+fail:
+	proposal.release(l, m + 1, m_pool);
+	return false;
+}
+
+bool ManifoldPerturbation::perturbDirection(Path &source, Path &proposal, int step, int a, Vector2 offset, ETransportMode mode, bool lightPath)
+{
+	const PathVertex
+		*pred_old = source.vertex(a - step),
+		*vertex_old = source.vertex(a),
+		*succ_old = source.vertex(a + step);
+	const PathEdge
+		*succEdge_old = source.edge(mode == EImportance ? a : a - 1);
+	PathVertex
+		*pred = proposal.vertex(a - step),
+		*vertex = proposal.vertex(a),
+		*succ = proposal.vertex(a + step);
+	PathEdge
+		*predEdge = proposal.edge(mode == EImportance ? a - step : a - 1 - step),
+		*succEdge = proposal.edge(mode == EImportance ? a : a - 1);
+
+	Float prob_old = std::max(INV_FOURPI, vertex_old->evalPdf(
+		m_scene, pred_old, succ_old, mode, ESolidAngle));
+
+	Point2 proposalSamplePosition = source.getSamplePosition() + offset;
+
+	const PerspectiveCamera *sensor = static_cast<const PerspectiveCamera *>(m_scene->getSensor());
+
+	//generate ray that goes into offset direction
+	Ray ray;
+	if (sensor->sampleRay(ray, proposalSamplePosition, Point2(0.5f), 0.0f).isZero())
+		return false;
+
+	Float focusDistance = sensor->getFocusDistance() /
+		absDot(sensor->getWorldTransform(0)(Vector(0, 0, 1)), ray.d);
+
+	/* Correct direction based on the current aperture sample.
+	This is necessary to support thin lens cameras */
+	Vector d = normalize(ray(focusDistance) - source.vertex(a)->getPosition());
+
+	Float dist = source.edge(a - 1)->length; // Length of primary ray (sensor -> first hit of any type)
+
+	Vector wo_old = normalize(succ_old->getPosition()
+		- vertex_old->getPosition());
+	Vector wo_new = d;
+
+	//======>
+	if (!vertex->perturbDirection(m_scene,
+		pred, predEdge, succEdge, succ, wo_new,
+		succEdge_old->length, succ_old->getType(), mode)) {
+		return false;
+	}
+	return true;
+}
+
+
+bool ManifoldPerturbation::propagatePerturbation(Path &source, Path &proposal, int step, int a, int b, ETransportMode mode)
+{
+	statsUsedPropagation.incrementBase();
+	if (a - b > 1)
+		++statsUsedPropagation;
+
+	statsPROPFailedBRDF.incrementBase();
+	statsPROPFailedPropagatePerturbation.incrementBase();
+	statsPROPwoWorldZero.incrementBase();
+	statsPROPFailedPerturbDirection.incrementBase();
+
+	for (int i = a + step; i != b; i += step) {
+		const PathVertex
+			*pred_old = source.vertex(i - step),
+			*vertex_old = source.vertex(i),
+			*succ_old = source.vertex(i + step);
+		const PathEdge
+			*succEdge_old = source.edge(mode == EImportance ? i : i - 1);
+		PathVertex
+			*pred = proposal.vertex(i - step),
+			*vertex = proposal.vertex(i),
+			*succ = proposal.vertex(i + step);
+		PathEdge
+			*predEdge = proposal.edge(mode == EImportance ? i - step : i - 1 - step),
+			*succEdge = proposal.edge(mode == EImportance ? i : i - 1);
+
+		if (vertex_old->isSurfaceInteraction()) {
+
+			const Intersection
+				&its_old = vertex_old->getIntersection(),
+				&its_new = vertex->getIntersection();
+
+			Vector
+				wi_old = its_old.toLocal(normalize(pred_old->getPosition() - its_old.p)),
+				wo_old = its_old.toLocal(normalize(succ_old->getPosition() - its_old.p));
+
+			bool reflection = Frame::cosTheta(wi_old) * Frame::cosTheta(wo_old) > 0;
+			Float eta = vertex_old->getIntersection().getBSDF()->getEta();
+			Vector wi_world = normalize(pred->getPosition() - vertex->getPosition()),
+				wo_world(0.0f);
+
+			/// todo: this is perhaps a bit drastic
+			if (its_old.getBSDF() != its_new.getBSDF()){
+				++statsPROPFailedBRDF;
+				return false; 
+			}
+
+			//	if (its_old.getBSDF()->getRoughness(its_old,vertex_old->sampledComponentIndex) != its_new.getBSDF()->getRoughness(its_new,vertex_old->sampledComponentIndex))
+			//		return false; 
+
+			if (vertex_old->isConnectable()) {
+				Vector m(0.0f);
+				if (reflection)
+					m = normalize(wi_old + wo_old);
+				else if (eta != 1)
+					m = normalize(wi_old.z < 0 ? (wi_old*eta + wo_old)
+					: (wi_old + wo_old*eta));
+				m = its_new.toWorld(m.z > 0 ? m : -m);
+
+				if (reflection) {
+					wo_world = reflect(wi_world, m);
+				}
+				else {
+					if (eta != 1) {
+						wo_world = refract(wi_world, m, eta);
+						if (wo_world.isZero()){
+							++statsPROPwoWorldZero;
+							return false; 
+						}
+					}
+					else {
+						wo_world = -wi_world;
+					}
+				}
+
+				Float dist = succEdge_old->length;
+				if (i + step == b && succ_old->isMediumInteraction())
+					dist += perturbMediumDistance(m_sampler, succ_old);
+
+				if (!vertex->perturbDirection(m_scene,
+					pred, predEdge, succEdge, succ, wo_world,
+					dist, succ_old->getType(), mode)) {
+					++statsPROPFailedPerturbDirection;
+					return false; 
+				}
+			}
+			else {
+				int component = reflection ? BSDF::EDeltaReflection :
+					(BSDF::EDeltaTransmission | BSDF::ENull);
+
+				Float dist = succEdge_old->length;
+				if (i + step == b && succ_old->isMediumInteraction())
+					dist += perturbMediumDistance(m_sampler, succ_old);
+
+				if (!vertex->propagatePerturbation(m_scene,
+					pred, predEdge, succEdge, succ, component, dist,
+					succ_old->getType(), mode)) {
+					++statsPROPFailedPropagatePerturbation;
+					return false; 
+				}
+			}
+		}
+		else if (vertex_old->isMediumInteraction()) {
+
+			statsPROPFailedDifferentialsZeroMedium.incrementBase();
+			statsPROPFailedPerturbDirectionMedium.incrementBase();
+
+			Point p_old = vertex_old->getPosition(),
+				p_new = vertex->getPosition();
+
+			Normal
+				n_old(normalize(p_old - pred_old->getPosition())),
+				n_new(normalize(p_new - pred->getPosition()));
+
+			Vector
+				dpdu_old = Vector(p_old) - dot(Vector(p_old), n_old) * n_old,
+				dpdu_new = Vector(p_new) - dot(Vector(p_new), n_new) * n_new;
+
+			Vector dpdv_old, dpdv_new, wo_old, wo_new;
+			Float cosTheta, cosPhi, sinPhi;
+
+			if (dpdu_old.isZero() || dpdu_new.isZero()){
+				++statsPROPFailedDifferentialsZeroMedium;
+				return false; // Tero: never happens in torus/simple
+			}
+			dpdu_old = normalize(dpdu_old);
+			dpdu_new = normalize(dpdu_new);
+			dpdv_old = cross(n_old, dpdu_old);
+			dpdv_new = cross(n_new, dpdu_new);
+
+			wo_old = normalize(succ_old->getPosition() - p_old);
+
+			cosTheta = dot(wo_old, n_old);
+
+			Float dTheta = warp::squareToStdNormal(m_sampler->next2D()).x
+				* 0.5f * M_PI / m_probFactor;
+			math::sincos(dTheta, &sinPhi, &cosPhi);
+
+			Float x = dot(wo_old, dpdu_old), y = dot(wo_old, dpdv_old);
+			Float x_new = x * cosPhi - y*sinPhi,
+				y_new = x * sinPhi + y*cosPhi;
+
+			wo_new = dpdu_new * x_new + dpdv_new * y_new + n_new * cosTheta;
+
+			Float dist = succEdge_old->length;
+			if (i + step == b && succ_old->isMediumInteraction())
+				dist += perturbMediumDistance(m_sampler, succ_old);
+
+			if (!vertex->perturbDirection(m_scene,
+				pred, predEdge, succEdge, succ, wo_new,
+				dist, succ_old->getType(), mode)){
+				++statsPROPFailedPerturbDirectionMedium;
+				return false;
+			}
+		}
+		else {
+			Log(EError, "Unsupported vertex type!");
+		}
+	}
+	return true;
+}
+
+bool ManifoldPerturbation::manifoldWalk(Path &source, Path &proposal, int step, int b, int c)
+{
+
+	/* Choose a local parameterization of the specular manifold using
+	a plane with the following normal (which is computed in a
+	reversible manner) */
+	statsMWSuccess.incrementBase();
+	statsMWFailReversible.incrementBase();
+	statsMWFailInit.incrementBase();
+	statsMWZeroLength.incrementBase();
+	statsMWFailMove.incrementBase();
+	statsMWFailUpdate.incrementBase();
+	statsMWFailRobustness.incrementBase();
+	const PathVertex
+		*vb_old = source.vertex(b),
+		*vb_new = proposal.vertex(b);
+
+	Point p0;
+	Normal n, n1, n2;
+	++statsUsedManifold;
+
+	if (!vb_old->isMediumInteraction()) {
+		n1 = vb_old->getGeometricNormal();
+		n2 = vb_new->getGeometricNormal();
+	}
+	else {
+		n1 = normalize(vb_old->getPosition() - source.vertex(b - step)->getPosition());
+		n2 = normalize(vb_new->getPosition() - proposal.vertex(b - step)->getPosition());
+	}
+
+	Vector rel = vb_new->getPosition() - vb_old->getPosition();
+	Float len = rel.length();
+	if (len == 0){
+		++statsMWZeroLength;
+		return false; 
+	}
+	rel /= len;
+
+	if (dot(n1, n2) < 0)
+		n1 = -n1;
+	n = n1 + n2;
+	n = n - dot(rel, n)*rel;
+	len = n.length();
+	if (len == 0){
+		++statsMWZeroLength;
+		return false; 
+	}
+	n /= len;
+
+	if (!m_manifold->init(source, c, b)){
+		++statsMWFailInit;
+		return false; 
+	}
+	p0 = m_manifold->getPosition(1);
+	if (!m_manifold->move(vb_new->getPosition(), n)){
+		++statsMWFailMove;
+		return false; 
+	}
+	if (!m_manifold->update(proposal, c, b)){
+		++statsMWFailUpdate;
+		return false; 
+	}
+	if (!m_manifold->move(vb_old->getPosition(), n)) {
+		++statsMWFailReversible;
+		return false; 
+	}
+
+	Point p1 = m_manifold->getPosition(1);
+	Float relerr = (p0 - p1).length() / m_scene->getBSphere().radius;
+	if (relerr > 10.0f * MTS_MANIFOLD_EPSILON) {
+		++statsMWFailRobustness;
+		return false;
+	}
+
+	++statsMWSuccess;
+	return true;
+}
+
+
+int ManifoldPerturbation::getSpecularChainEndGBDPT(const Path &path, int pos, int step) {
+	while (true) {
+		if (pos < 0 || pos > path.length())
+			return -1;
+
+		const PathVertex *vertex = path.vertex(pos);
+		if (vertex->isSurfaceInteraction() && vertex->isConnectable())
+			statsRoughSurfaceSpecular.incrementBase();
+		else if (vertex->isMediumInteraction())
+			statsRoughMediumSpecular.incrementBase();
+
+		if (!vertex->isSurfaceInteraction())
+			break;
+
+		const Intersection& its = vertex->getIntersection();
+		const BSDF* bsdf = its.getBSDF();
+
+		Float roughness = std::numeric_limits<Float>::infinity();
+
+		roughness = bsdf->getRoughness(its, vertex->sampledComponentIndex);
+		if (vertex->isConnectable() && roughness >= m_specularThreshold)
+			break;
+
+		if (vertex->isSurfaceInteraction() && vertex->isConnectable())
+			++statsRoughSurfaceSpecular;
+		else if (vertex->isMediumInteraction())
+			++statsRoughMediumSpecular;
+
+		pos += step;
+	}
+
+	return pos;
+}
+
+bool ManifoldPerturbation::computeMuRec(Path &source, MutationRecord &muRec, bool partialPath, bool lightPath) {
+
+	int k = source.length();
+
+	if (!source.vertex(k - 1)->isConnectable())
+		return false; // weird camera?
+
+	int sensor_idx = k - 1;
+	int step = -1;  // always towards light source
+	int a = k - 1;  // sensor vertex
+	int b, c;
+
+	if ((b = getSpecularChainEndGBDPT(source, a + step, step)) == -1)
+		return false;
+	if ((c = getSpecularChainEndGBDPT(source, b + step, step)) == -1)
+		return false;
+
+
+	ETransportMode mode = ERadiance; //always ERadiance
+	//here always l=c ,m=a, q=b-1
+	int l = std::min(a, c);
+	int m = std::max(a, c);
+	int q = std::min(b, b + step);
+
+	//prefix_suffix is the product of all weights outside the patch that is modified (eg [0..l+1]+[m..k])
+	muRec = MutationRecord(EManifoldPerturbation, l, m, m - l, source.getPrefixSuffixWeight(l, m));
+	muRec.extra[0] = a;
+	muRec.extra[1] = b;
+	muRec.extra[2] = c;
+	muRec.extra[3] = step;
+	muRec.extra[4] = mode;
+	return true;
 }
 
 MTS_IMPLEMENT_CLASS(ManifoldPerturbation, false, Mutator)

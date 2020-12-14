@@ -247,9 +247,12 @@ public:
 			/* Choose a component based on the normalized weights */
 			size_t entry = m_pdf.sampleReuse(sample.x);
 
-			Spectrum result = m_bsdfs[entry]->sample(bRec, pdf, sample);
-			if (result.isZero()) // sampling failed
+			Float temporaryPdf = (Float)0;
+			Spectrum result = m_bsdfs[entry]->sample(bRec, temporaryPdf, sample);
+			if (temporaryPdf <= 0) // sampling failed
 				return result;
+
+			pdf = temporaryPdf;
 
 			result *= m_weights[entry] * pdf;
 			pdf *= m_pdf[entry];

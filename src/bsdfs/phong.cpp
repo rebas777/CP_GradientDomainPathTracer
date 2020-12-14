@@ -119,10 +119,13 @@ public:
 		return Vector(-wi.x, -wi.y, wi.z);
 	}
 
-	Spectrum eval(const BSDFSamplingRecord &bRec, EMeasure measure) const {
+	Spectrum eval(const BSDFSamplingRecord &bRec, EMeasure measure, bool& success) const {
 		if (Frame::cosTheta(bRec.wi) <= 0 ||
 			Frame::cosTheta(bRec.wo) <= 0 || measure != ESolidAngle)
+		{
+			success = false;
 			return Spectrum(0.0f);
+		}
 
 		bool hasSpecular = (bRec.typeMask & EGlossyReflection)
 				&& (bRec.component == -1 || bRec.component == 0);
@@ -143,7 +146,13 @@ public:
 		if (hasDiffuse)
 			result += m_diffuseReflectance->eval(bRec.its) * INV_PI;
 
+		success = true;
 		return result * Frame::cosTheta(bRec.wo);
+	}
+
+	Spectrum eval(const BSDFSamplingRecord &bRec, EMeasure measure) const {
+		bool success;
+		return eval(bRec, measure, success);
 	}
 
 	Float pdf(const BSDFSamplingRecord &bRec, EMeasure measure) const {
@@ -233,10 +242,18 @@ public:
 
 		_pdf = pdf(bRec, ESolidAngle);
 
-		if (_pdf == 0)
+		if (_pdf == 0) {
 			return Spectrum(0.0f);
-		else
-			return eval(bRec, ESolidAngle) / _pdf;
+		} else {
+			bool success;
+			Spectrum result = eval(bRec, ESolidAngle, success);
+			
+			if(result.isZero()) {
+				_pdf = Float(0);
+			}
+
+			return result / _pdf;
+		}
 	}
 
 	Spectrum sample(BSDFSamplingRecord &bRec, const Point2 &sample) const {
