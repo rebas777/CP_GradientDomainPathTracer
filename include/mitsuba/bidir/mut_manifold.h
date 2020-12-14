@@ -24,6 +24,8 @@
 
 MTS_NAMESPACE_BEGIN
 
+#define SPECULAR_ROUGHNESS_THRESHOLD 0.01 // Smaller value = prefer treating materials as non-specular. Larger value = prefer treating them as specular.
+
 #define MTS_MANIFOLD_QUANTILE_SURFACE 0.9f
 #define MTS_MANIFOLD_QUANTILE_MEDIUM  0.5f
 
@@ -53,7 +55,8 @@ public:
 		bool enableOffsetManifolds,
 		bool enableSpecularMedia,
 		Float avgAngleChangeSurface = 0,
-		Float avgAngleChangeMedium = 0);
+		Float avgAngleChangeMedium = 0,
+		Float specularThreshold = 0.001);
 
 	// =============================================================
 	//! @{ \name Implementation of the Mutator interface
@@ -65,6 +68,18 @@ public:
 	Float Q(const Path &source, const Path &proposal,
 			const MutationRecord &muRec) const;
 	void accept(const MutationRecord &muRec);
+
+	/// Generates the mutation record without actually mutating the path.
+	bool computeMuRec(Path &source, MutationRecord &muRec, bool partialPath = false, bool lightpath = false);
+
+	/// G-BDPT specific offset path generation function. Based on the code taken from the G-MLT team.
+	bool generateOffsetPathGBDPT(Path &source, Path &proposal, MutationRecord &muRec, Vector2 offset, bool &couldConnectBehindB, bool lightpath = false);
+
+	/// access to SpecularManifold object for other things as well
+	SpecularManifold* getSpecularManifold(void) { return m_manifold; }
+
+	/// access to specular threshold
+	Float getSpecularThreshold(){ return m_specularThreshold; }
 
 	//! @}
 	// =============================================================
@@ -86,6 +101,11 @@ protected:
 		return 1 - nonspecularProb(vertex);
 	}
 
+	/* helper functions for G-BDPT*/
+	bool manifoldWalk(Path &source, Path &proposal, int step, int b, int c);
+	bool propagatePerturbation(Path &source, Path &proposal, int step, int a, int b, ETransportMode mode);
+	bool perturbDirection(Path &source, Path &proposal, int step, int a, Vector2 offset, ETransportMode mode, bool lightPath = false);
+	int getSpecularChainEndGBDPT(const Path &path, int pos, int step);
 	int getSpecularChainEnd(const Path &path, int pos, int step);
 protected:
 	ref<const Scene> m_scene;
@@ -100,6 +120,7 @@ protected:
 	static int m_thetaDiffSurfaceSamples;
 	static int m_thetaDiffMediumSamples;
 	static Mutex *m_thetaDiffMutex;
+	Float m_specularThreshold;
 };
 
 MTS_NAMESPACE_END

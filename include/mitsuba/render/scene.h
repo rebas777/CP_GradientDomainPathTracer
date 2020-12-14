@@ -514,6 +514,13 @@ public:
 			const Point2 &sample, bool testVisibility = true) const;
 
 	/**
+	 * \brief Like sampleEmitterDirect, but always tests for visibility and
+	          returns also whether the sampled emitter is visible.
+	 */
+	std::pair<Spectrum, bool> sampleEmitterDirectVisible(DirectSamplingRecord &dRec,
+		const Point2 &_sample) const;
+
+	/**
 	 * \brief Direct illumination sampling with support for participating
 	 * media (medium variant)
 	 *

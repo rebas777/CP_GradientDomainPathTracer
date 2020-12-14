@@ -26,6 +26,7 @@
 
 MTS_NAMESPACE_BEGIN
 
+class ManifoldPerturbation; // Samuli
 /**
  * \brief Bidirectional path data structure
  *
@@ -47,10 +48,6 @@ struct MTS_EXPORT_BIDIR Path {
 public:
 	typedef PathEdge *          PathEdgePtr;
 	typedef PathVertex *        PathVertexPtr;
-
-	/* ==================================================================== */
-	//! @{ \name              Path construction
-	/* ==================================================================== */
 
 	/// Create a new, empty path
 	inline Path() { }
@@ -175,6 +172,57 @@ public:
 		Sampler *sampler, Path &emitterPath, int nEmitterSteps,
 		Path &sensorPath, int nSensorSteps, const Point2i &pixelPosition,
 		int rrStart, MemoryPool &pool);
+
+
+	/* G-BDPT specific funtions */
+
+	/// This function is for convenience only. It allows to change the set of paths on which MIS is applied.
+	static bool MIScond_GBDPT(int tPrime, int maxT, bool lightImage);
+
+	/* Checks is it is allowed to use vertex va as a conncetion vertex.
+	 * If the materials roughness is below the SPECULAR_ROUGHNESS_THRESHOLD we don't allow it!
+	 */
+	static bool	isConnectable_GBDPT(const PathVertex *va, float threshold);
+
+	/// Does the same as miWeight, but has some more options.
+	static Float miWeightGradNoSweep_GBDPT(const Scene *scene,
+		const Path &emitterSubpath,
+		const PathEdge *connectionEdge,
+		const Path &sensorSubpath,
+		const Path&offsetEmitterSubpath,
+		const PathEdge *offsetConnectionEdge,
+		const Path &offsetSensorSubpath,
+		int s, int t,
+		bool direct, bool lightImage,
+		Float jDet, Float exponent, double geomTermX, double geomTermY, int maxT, float th);
+
+	/// Computes the MIS weights for offset paths for G-BDPT. Could be done more efficiently with a linear sweep. 
+	static Float miWeightBaseNoSweep_GBDPT(const Scene *scene,
+		const Path &emitterSubpath,
+		const PathEdge *connectionEdge,
+		const Path &sensorSubpath,
+		const Path&offsetEmitterSubpath,
+		const PathEdge *offsetConnectionEdge,
+		const Path &offsetSensorSubpath,
+		int s, int t,
+		bool direct, bool lightImage,
+		Float jDet, Float exponent, double geomTermX, double geomTermY, int maxT, float th);
+
+	/// Jacobian of full perturbation.
+	double  halfJacobian_GBDPT(int a, int b, int c, ManifoldPerturbation* offsetMutator); 
+
+	/// computes the (simple) geometry term between vertex i and i+1.
+	Float	getGeometryTerm(int i) const;
+
+	/// computes correction factor of PDF for paths with specular vertices (since they aren't integration variables)
+	Float	calcSpecularPDFChange(int a, ManifoldPerturbation* offsetMutator, bool lightpath = false);
+
+	/** Evaluates the (extended) geometry term between vertices i and j,
+	 * i.e. G( x(i) <-> x(i+1) <-> ... <-> x(j) )
+	 * = dw+(i) / dA(j)
+	 * = dw+(j) / dA(i)
+	 */
+	double  G(int i, int j, ManifoldPerturbation* offsetMutator) const;
 
 	/**
 	 * \brief Verify the cached values stored in this path
@@ -478,6 +526,13 @@ public:
 	/// Clear the path and release all elements to the memory pool
 	void release(MemoryPool &pool);
 
+	/// remove and release last element of the path (needed for G-BDPT only)
+	void removeAndReleaseLastElement(MemoryPool &pool) { 
+		pool.release(m_vertices.back()); 
+		pool.release(m_edges.back()); 
+		m_vertices.pop_back(); m_edges.pop_back(); 
+	}
+
 	/// Release a certain subpath [start, end) to the memory pool
 	void release(size_t start, size_t end, MemoryPool &pool);
 
@@ -511,7 +566,7 @@ public:
 
 	//! @}
     /* ==================================================================== */
-private:
+
 	std::vector<PathVertexPtr> m_vertices;
 	std::vector<PathEdgePtr>   m_edges;
 };
