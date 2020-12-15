@@ -40,4 +40,7 @@ plugins += bidirEnv.SharedLibrary('erpt',
 	['erpt/erpt.cpp', 'erpt/erpt_proc.cpp']
 )
 
+# Gradient Domain 
+plugins += env.SharedLibrary('GDPTIntegrator', ['gdpt/gdpt.cpp'])
+
 Export('plugins')

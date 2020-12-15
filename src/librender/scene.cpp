@@ -851,6 +851,27 @@ Spectrum Scene::sampleEmitterDirect(DirectSamplingRecord &dRec,
 	}
 }
 
+std::pair<Spectrum, bool> Scene::sampleEmitterDirectVisible(DirectSamplingRecord& dRec,
+	const Point2& _sample) const {
+	Point2 sample(_sample);
+
+	/* Randomly pick an emitter */
+	Float emPdf;
+	size_t index = m_emitterPDF.sampleReuse(sample.x, emPdf);
+	const Emitter* emitter = m_emitters[index].get();
+	Spectrum value = emitter->sampleDirect(dRec, sample);
+
+	Ray ray(dRec.ref, dRec.d, Epsilon,
+		dRec.dist * (1 - ShadowEpsilon), dRec.time);
+	if (m_kdtree->rayIntersect(ray))
+		return std::make_pair(Spectrum(0.0f), false); //blocked
+
+	dRec.object = emitter;
+	dRec.pdf *= emPdf;
+	value /= emPdf;
+	return std::make_pair(value, true);
+}
+
 Spectrum Scene::sampleAttenuatedEmitterDirect(DirectSamplingRecord &dRec,
 		const Medium *medium, int &interactions, const Point2 &_sample, Sampler *sampler) const {
 	Point2 sample(_sample);
