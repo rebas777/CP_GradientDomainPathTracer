@@ -28,6 +28,7 @@
 
 
 MTS_NAMESPACE_BEGIN
+#define Float double
 
 /*!\plugin{gpt}{Gradient-domain path tracer}
 * \order{5}
@@ -67,6 +68,10 @@ const Float D_EPSILON = (Float)(1e-14);
 
 /// If defined, applies reconstruction after rendering.
 #define RECONSTRUCT
+//#define GET_DX
+//#define GET_DY
+//#define GET_DIRECT
+//#define GET_THROUGHPUT
 
 
 static StatsCounter avgPathLength("Gradient Path Tracer", "Average path length", EAverage);
@@ -1412,21 +1417,23 @@ bool GradientPathIntegrator::render(Scene *scene,
 	sched->unregisterResource(integratorResID);
 	m_process = NULL;
 
+
+	/* Allocate bitmaps for the solvers. */
+	ref<Bitmap> throughputBitmap(new Bitmap(Bitmap::ESpectrum, Bitmap::EFloat, film->getCropSize()));
+	ref<Bitmap> directBitmap(new Bitmap(Bitmap::ESpectrum, Bitmap::EFloat, film->getCropSize()));
+	ref<Bitmap> dxBitmap(new Bitmap(Bitmap::ESpectrum, Bitmap::EFloat, film->getCropSize()));
+	ref<Bitmap> dyBitmap(new Bitmap(Bitmap::ESpectrum, Bitmap::EFloat, film->getCropSize()));
+	ref<Bitmap> reconstructionBitmap(new Bitmap(Bitmap::ESpectrum, Bitmap::EFloat, film->getCropSize()));
+
+	/* Develop primal and gradient data into bitmaps. */
+	film->developMulti(Point2i(0, 0), film->getCropSize(), Point2i(0, 0), throughputBitmap, BUFFER_THROUGHPUT);
+	film->developMulti(Point2i(0, 0), film->getCropSize(), Point2i(0, 0), dxBitmap, BUFFER_DX);
+	film->developMulti(Point2i(0, 0), film->getCropSize(), Point2i(0, 0), dyBitmap, BUFFER_DY);
+	film->developMulti(Point2i(0, 0), film->getCropSize(), Point2i(0, 0), directBitmap, BUFFER_VERY_DIRECT);
+
 #ifdef RECONSTRUCT
 	/* Reconstruct. */
 	if(m_config.m_reconstructL1 || m_config.m_reconstructL2) {
-		/* Allocate bitmaps for the solvers. */
-		ref<Bitmap> throughputBitmap(new Bitmap(Bitmap::ESpectrum, Bitmap::EFloat, film->getCropSize()));
-		ref<Bitmap> directBitmap(new Bitmap(Bitmap::ESpectrum, Bitmap::EFloat, film->getCropSize()));
-		ref<Bitmap> dxBitmap(new Bitmap(Bitmap::ESpectrum, Bitmap::EFloat, film->getCropSize()));
-		ref<Bitmap> dyBitmap(new Bitmap(Bitmap::ESpectrum, Bitmap::EFloat, film->getCropSize()));
-		ref<Bitmap> reconstructionBitmap(new Bitmap(Bitmap::ESpectrum, Bitmap::EFloat, film->getCropSize()));
-
-		/* Develop primal and gradient data into bitmaps. */
-		film->developMulti(Point2i(0, 0), film->getCropSize(), Point2i(0, 0), throughputBitmap, BUFFER_THROUGHPUT);
-		film->developMulti(Point2i(0, 0), film->getCropSize(), Point2i(0, 0), dxBitmap, BUFFER_DX);
-		film->developMulti(Point2i(0, 0), film->getCropSize(), Point2i(0, 0), dyBitmap, BUFFER_DY);
-		film->developMulti(Point2i(0, 0), film->getCropSize(), Point2i(0, 0), directBitmap, BUFFER_VERY_DIRECT);
 
 		/* Transform the data for the solver. */
 		size_t subPixelCount = 3 * film->getCropSize().x * film->getCropSize().y;
@@ -1460,7 +1467,7 @@ bool GradientPathIntegrator::render(Scene *scene,
 		solver.solveIndirect();
 
 		solver.exportImagesMTS(reconstructionVector.data());
-
+		
 		/* Give the solution back to Mitsuba. */
 		int w = reconstructionBitmap->getSize().x;
 		int h = reconstructionBitmap->getSize().y;
@@ -1474,6 +1481,22 @@ bool GradientPathIntegrator::render(Scene *scene,
 
 		film->setBitmapMulti(reconstructionBitmap, 1, BUFFER_FINAL); 
 	}
+#endif
+
+#ifdef GET_DIRECT
+	film->setBitmapMulti(directBitmap, 1, BUFFER_FINAL);
+#endif
+
+#ifdef GET_DX
+	film->setBitmapMulti(dxBitmap, 1, BUFFER_FINAL);
+#endif
+
+#ifdef GET_DY
+	film->setBitmapMulti(dyBitmap, 1, BUFFER_FINAL);
+#endif
+
+#ifdef GET_THROUGHPUT
+	film->setBitmapMulti(throughputBitmap, 1, BUFFER_FINAL);
 #endif
 
 	return proc->getReturnStatus() == ParallelProcess::ESuccess;
